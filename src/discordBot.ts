@@ -139,6 +139,19 @@ export class DiscordSupportBot {
           });
           return;
         }
+        if ("permissionsFor" in interaction.channel) {
+          const missingPermissions = setupEntryMissingPermissions(
+            interaction.channel,
+            this.client.user?.id
+          );
+          if (missingPermissions.length > 0) {
+            await interaction.reply({
+              content: `Bot is missing permissions in this channel: ${missingPermissions.join(", ")}`,
+              ephemeral: true
+            });
+            return;
+          }
+        }
         await interaction.channel.send({
           content: [
             "**PHOENIX Support**",
@@ -483,4 +496,23 @@ function codeBlock(value: string): string {
 function formatError(error: unknown): string {
   if (error instanceof Error) return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
   return String(error);
+}
+
+function setupEntryMissingPermissions(
+  channel: { permissionsFor(userId: string): { has(permission: bigint): boolean } | null },
+  botUserId: string | undefined
+): string[] {
+  if (!botUserId) return ["Bot user not ready"];
+  const permissions = channel.permissionsFor(botUserId);
+  if (!permissions) return ["View Channel"];
+
+  const required: Array<[bigint, string]> = [
+    [PermissionFlagsBits.ViewChannel, "View Channel"],
+    [PermissionFlagsBits.SendMessages, "Send Messages"],
+    [PermissionFlagsBits.ReadMessageHistory, "Read Message History"]
+  ];
+
+  return required
+    .filter(([permission]) => !permissions.has(permission))
+    .map(([, label]) => label);
 }

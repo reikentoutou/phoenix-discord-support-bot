@@ -8,6 +8,8 @@ const envSchema = z.object({
   DISCORD_ENTRY_CHANNEL_ID: z.string().min(1),
   DISCORD_STAFF_CHANNEL_ID: z.string().min(1),
   DISCORD_STAFF_ROLE_ID: z.string().min(1),
+  WELCOME_CHANNEL_ID: z
+    .preprocess((value) => (value === "" ? undefined : value), z.string().min(1).optional()),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_BASE_URL: z.string().url().optional(),
   OPENAI_MODEL: z.string().default("deepseek-v4-flash"),

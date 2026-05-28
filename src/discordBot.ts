@@ -3,6 +3,7 @@ import {
   ButtonInteraction,
   ChatInputCommandInteraction,
   Client,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   GuildMember,
@@ -76,7 +77,59 @@ export class DiscordSupportBot {
       void this.handleMessage(message);
     });
 
+    this.client.on(Events.GuildMemberAdd, (member) => {
+      void this.handleGuildMemberAdd(member);
+    });
+
     await this.client.login(this.config.DISCORD_TOKEN);
+  }
+
+  private async handleGuildMemberAdd(member: GuildMember) {
+    if (member.user.bot || !this.config.WELCOME_CHANNEL_ID) return;
+    if (member.guild.id !== this.config.DISCORD_GUILD_ID) return;
+
+    try {
+      const channel = await this.client.channels.fetch(
+        this.config.WELCOME_CHANNEL_ID,
+      );
+      if (!channel?.isTextBased() || !("send" in channel)) {
+        console.warn("Configured welcome channel is not text based.");
+        return;
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0xd84343)
+        .setTitle("Welcome to eSPORTS CAFE PHOENIX 池袋")
+        .setDescription(
+          [
+            `${member.displayName} さん、ようこそ。`,
+            "欢迎加入 PHOENIX Discord 社区。",
+            "Please check the server information and enjoy your stay.",
+          ].join("\n"),
+        )
+        .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
+        .addFields(
+          {
+            name: "Support / お問い合わせ / 咨询",
+            value: `Need help? Start a private support ticket in <#${this.config.DISCORD_ENTRY_CHANNEL_ID}>.`,
+          },
+          {
+            name: "Quick Tips",
+            value:
+              "Please follow the server rules, keep conversations respectful, and ask staff if you need help in-store.",
+          },
+        )
+        .setFooter({ text: `Member #${member.guild.memberCount}` })
+        .setTimestamp();
+
+      await channel.send({
+        content: `<@${member.id}>`,
+        embeds: [embed],
+        allowedMentions: { users: [member.id] },
+      });
+    } catch (error) {
+      console.error("Failed to send welcome card:", formatError(error));
+    }
   }
 
   private async handleInteraction(interaction: Interaction) {

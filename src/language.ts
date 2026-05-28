@@ -47,3 +47,47 @@ export function needsStaffMessage(language: SupportedLanguage): string {
       return "I am not sure about this based on the current knowledge base. Would you like to contact staff?";
   }
 }
+
+export function supportWelcomeMessage(language: SupportedLanguage): string {
+  switch (language) {
+    case "zh":
+      return "您好，请直接输入你的问题。机器人会先根据知识库回答；解决不了可以点「转人工」。";
+    case "ja":
+      return "ご質問をそのまま入力してください。Botが知識ベースをもとに回答します。解決できない場合は「スタッフへ連絡」を押してください。";
+    case "en":
+      return "Please type your question. The bot will answer from the knowledge base first. If needed, use Contact staff.";
+  }
+}
+
+export function handoffConfirmedMessage(language: SupportedLanguage): string {
+  switch (language) {
+    case "zh":
+      return "已通知员工。";
+    case "ja":
+      return "スタッフに通知しました。";
+    case "en":
+      return "Staff has been notified.";
+  }
+}
+
+export function ticketClosedMessage(language: SupportedLanguage): string {
+  switch (language) {
+    case "zh":
+      return "已关闭。";
+    case "ja":
+      return "クローズしました。";
+    case "en":
+      return "Ticket closed.";
+  }
+}
+
+export function existingTicketMessage(language: SupportedLanguage, url: string): string {
+  switch (language) {
+    case "zh":
+      return `你已经有一个未关闭的咨询：${url}`;
+    case "ja":
+      return `未クローズの相談があります：${url}`;
+    case "en":
+      return `You already have an open ticket: ${url}`;
+  }
+}

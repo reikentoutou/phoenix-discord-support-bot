@@ -17,7 +17,15 @@ import type { AppConfig } from "./config.js";
 import type { OpenAIService } from "./ai.js";
 import { AppDatabase } from "./db.js";
 import { ButtonIds, entryButtons, staffClaimButtons, ticketButtons } from "./buttons.js";
-import { detectLanguage, languageName, needsStaffMessage } from "./language.js";
+import {
+  detectLanguage,
+  existingTicketMessage,
+  handoffConfirmedMessage,
+  languageName,
+  needsStaffMessage,
+  supportWelcomeMessage,
+  ticketClosedMessage
+} from "./language.js";
 import { formatContext, KnowledgeBase } from "./knowledge.js";
 import type { SupportedLanguage, Ticket } from "./types.js";
 
@@ -66,7 +74,7 @@ export class DiscordSupportBot {
 
       if (!interaction.isButton()) return;
 
-      if (interaction.customId === ButtonIds.start) {
+      if (interaction.customId.startsWith(ButtonIds.startPrefix)) {
         await this.handleStart(interaction);
         return;
       }
@@ -82,8 +90,7 @@ export class DiscordSupportBot {
         }
         await this.moveToHuman(ticket, interaction.user.id, "Customer requested staff.");
         await interaction.reply({
-          content:
-            "已转人工 / スタッフに通知しました / Staff has been notified.",
+          content: handoffConfirmedMessage(ticket.language ?? "en"),
           ephemeral: false
         });
         return;
@@ -99,7 +106,7 @@ export class DiscordSupportBot {
           return;
         }
         await interaction.reply({
-          content: "Ticket closed. / 已关闭 / クローズしました。",
+          content: ticketClosedMessage(ticket.language ?? "en"),
           ephemeral: false
         });
         await this.closeTicket(ticket, interaction.channel as ThreadChannel | null);
@@ -134,9 +141,8 @@ export class DiscordSupportBot {
         }
         await interaction.channel.send({
           content: [
-            "**PHOENIX Support / 咨询 / サポート**",
-            "点击按钮开始独立咨询。スタッフ対応が必要な場合は ticket 内で切り替えられます。",
-            "Click the button to start a private support thread."
+            "**PHOENIX Support**",
+            "请选择咨询语言。 / Please choose a language."
           ].join("\n"),
           components: entryButtons()
         });
@@ -155,7 +161,7 @@ export class DiscordSupportBot {
           });
           return;
         }
-        await interaction.reply("Ticket closed. / 已关闭 / クローズしました。");
+        await interaction.reply(ticketClosedMessage(ticket.language ?? "en"));
         await this.closeTicket(ticket, interaction.channel as ThreadChannel | null);
         break;
       }
@@ -184,6 +190,15 @@ export class DiscordSupportBot {
   }
 
   private async handleStart(interaction: ButtonInteraction) {
+    const selectedLanguage = parseStartLanguage(interaction.customId);
+    if (!selectedLanguage) {
+      await interaction.reply({
+        content: "Invalid language selection.",
+        ephemeral: true
+      });
+      return;
+    }
+
     if (!interaction.guild || !interaction.channel || interaction.channelId !== this.config.DISCORD_ENTRY_CHANNEL_ID) {
       await interaction.reply({
         content: "Please start support from the configured entry channel.",
@@ -195,7 +210,10 @@ export class DiscordSupportBot {
     const existing = this.db.getOpenTicketForUser(interaction.user.id);
     if (existing) {
       await interaction.reply({
-        content: `You already have an open ticket: https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`,
+        content: existingTicketMessage(
+          selectedLanguage,
+          `https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`
+        ),
         ephemeral: true
       });
       return;
@@ -230,7 +248,8 @@ export class DiscordSupportBot {
 
     const ticket = this.db.createTicket({
       threadId: thread.id,
-      userId: interaction.user.id
+      userId: interaction.user.id,
+      language: selectedLanguage
     });
     this.db.addMessage({
       ticketId: ticket.id,
@@ -242,11 +261,9 @@ export class DiscordSupportBot {
     await thread.send({
       content: [
         `<@${interaction.user.id}>`,
-        "您好，请直接输入你的问题。机器人会先根据知识库回答，解决不了可以点「转人工」。",
-        "ご質問をそのまま入力してください。解決できない場合は「スタッフへ連絡」を押してください。",
-        "Please type your question. The bot will answer from the knowledge base first; use Staff if needed."
+        supportWelcomeMessage(selectedLanguage)
       ].join("\n"),
-      components: ticketButtons()
+      components: ticketButtons(selectedLanguage)
     });
 
     await interaction.reply({
@@ -274,8 +291,8 @@ export class DiscordSupportBot {
 
     if (!isTicketOwner) return;
 
-    const language = detectLanguage(message.content);
-    if (ticket.language !== language) {
+    const language = ticket.language ?? detectLanguage(message.content);
+    if (!ticket.language) {
       this.db.updateTicketLanguage(ticket.id, language);
     }
 
@@ -295,7 +312,7 @@ export class DiscordSupportBot {
     if (results.length === 0) {
       await message.reply({
         content: needsStaffMessage(language),
-        components: ticketButtons()
+        components: ticketButtons(language)
       });
       return;
     }
@@ -311,7 +328,7 @@ export class DiscordSupportBot {
     if (answer.needsStaff) {
       await message.reply({
         content: needsStaffMessage(language),
-        components: ticketButtons()
+        components: ticketButtons(language)
       });
       return;
     }
@@ -325,7 +342,7 @@ export class DiscordSupportBot {
 
     await message.reply({
       content: answer.answer,
-      components: ticketButtons()
+      components: ticketButtons(language)
     });
   }
 
@@ -451,6 +468,11 @@ function safeName(value: string): string {
     .replace(/[^a-z0-9_-]/g, "-")
     .replace(/-+/g, "-")
     .slice(0, 20);
+}
+
+function parseStartLanguage(customId: string): SupportedLanguage | null {
+  const raw = customId.slice(ButtonIds.startPrefix.length);
+  return raw === "zh" || raw === "ja" || raw === "en" ? raw : null;
 }
 
 function codeBlock(value: string): string {

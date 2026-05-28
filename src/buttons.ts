@@ -3,9 +3,10 @@ import {
   ButtonBuilder,
   ButtonStyle
 } from "discord.js";
+import type { SupportedLanguage } from "./types.js";
 
 export const ButtonIds = {
-  start: "support:start",
+  startPrefix: "support:start:",
   handoff: "support:handoff",
   close: "support:close",
   claimPrefix: "support:claim:"
@@ -15,23 +16,37 @@ export function entryButtons() {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(ButtonIds.start)
-        .setLabel("开始咨询 / 相談を開始 / Start")
+        .setCustomId(`${ButtonIds.startPrefix}zh`)
+        .setLabel("中文")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`${ButtonIds.startPrefix}ja`)
+        .setLabel("日本語")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`${ButtonIds.startPrefix}en`)
+        .setLabel("English")
         .setStyle(ButtonStyle.Primary)
     )
   ];
 }
 
-export function ticketButtons() {
+export function ticketButtons(language: SupportedLanguage) {
+  const labels = {
+    zh: { handoff: "转人工", close: "已解决" },
+    ja: { handoff: "スタッフへ連絡", close: "解決済み" },
+    en: { handoff: "Contact staff", close: "Close" }
+  }[language];
+
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(ButtonIds.handoff)
-        .setLabel("转人工 / スタッフへ連絡 / Staff")
+        .setLabel(labels.handoff)
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(ButtonIds.close)
-        .setLabel("已解决 / 解決済み / Close")
+        .setLabel(labels.close)
         .setStyle(ButtonStyle.Success)
     )
   ];

@@ -99,7 +99,7 @@ npm run dev
 | `MAX_CONTEXT_CHUNKS` | No | 每次传给 AI 的知识片段数量，默认 `4` |
 | `TICKET_AUTO_CLOSE_HOURS` | No | ticket 无新消息自动关闭小时数，默认 `12`，设为 `0` 可关闭 |
 | `TICKET_AUTO_CLOSE_CHECK_MINUTES` | No | 自动关闭检查间隔，默认 `10` |
-| `USER_MESSAGE_COOLDOWN_SECONDS` | No | 用户在 AI 状态下连续提问冷却秒数，默认 `10` |
+| `USER_MESSAGE_COOLDOWN_SECONDS` | No | 用户在 AI 状态下连续提问冷却秒数，默认 `2` |
 | `START_TICKET_COOLDOWN_SECONDS` | No | 用户连续点击入口按钮冷却秒数，默认 `5` |
 
 ## Discord Flow

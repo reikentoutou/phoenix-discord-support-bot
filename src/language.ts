@@ -113,3 +113,25 @@ export function autoCloseMessage(language: SupportedLanguage): string {
       return "This ticket was automatically closed because there were no new messages for a while. Please start a new ticket if you need more help.";
   }
 }
+
+export function messageTooLongMessage(language: SupportedLanguage, maxChars: number): string {
+  switch (language) {
+    case "zh":
+      return `消息太长了。请控制在 ${maxChars} 字以内，再重新发送。`;
+    case "ja":
+      return `メッセージが長すぎます。${maxChars}文字以内に短くして再度送信してください。`;
+    case "en":
+      return `Your message is too long. Please keep it under ${maxChars} characters and send it again.`;
+  }
+}
+
+export function aiLimitMessage(language: SupportedLanguage): string {
+  switch (language) {
+    case "zh":
+      return "你本小时的自动问答次数已达到上限。请稍后再试，或点击转人工。";
+    case "ja":
+      return "この1時間の自動回答回数が上限に達しました。しばらくしてから再度お試しいただくか、スタッフへ連絡してください。";
+    case "en":
+      return "You have reached the hourly auto-answer limit. Please try again later or contact staff.";
+  }
+}

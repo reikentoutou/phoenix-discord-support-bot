@@ -24,12 +24,14 @@ import {
 } from "./buttons.js";
 import {
   autoCloseMessage,
+  aiLimitMessage,
   cooldownMessage,
   detectLanguage,
   existingTicketMessage,
   handoffConfirmedMessage,
   languageName,
   needsStaffMessage,
+  messageTooLongMessage,
   supportWelcomeMessage,
   ticketClosedMessage,
 } from "./language.js";
@@ -41,6 +43,7 @@ export class DiscordSupportBot {
   private autoCloseTimer: NodeJS.Timeout | null = null;
   private readonly messageCooldowns = new Map<string, number>();
   private readonly startCooldowns = new Map<string, number>();
+  private readonly startingTickets = new Set<string>();
 
   constructor(
     private readonly config: AppConfig,
@@ -107,6 +110,7 @@ export class DiscordSupportBot {
         await interaction.reply({
           content: handoffConfirmedMessage(ticket.language ?? "en"),
           ephemeral: false,
+          allowedMentions: { parse: [] },
         });
         return;
       }
@@ -123,6 +127,7 @@ export class DiscordSupportBot {
         await interaction.reply({
           content: ticketClosedMessage(ticket.language ?? "en"),
           ephemeral: false,
+          allowedMentions: { parse: [] },
         });
         await this.closeTicket(
           ticket,
@@ -147,6 +152,13 @@ export class DiscordSupportBot {
     switch (interaction.commandName) {
       case "setup-entry":
         await this.ensureAdmin(interaction);
+        if (interaction.channelId !== this.config.DISCORD_ENTRY_CHANNEL_ID) {
+          await interaction.reply({
+            content: "Run /setup-entry only in the configured entry channel.",
+            ephemeral: true,
+          });
+          return;
+        }
         if (
           !interaction.channel?.isTextBased() ||
           !("send" in interaction.channel)
@@ -176,6 +188,7 @@ export class DiscordSupportBot {
             "サポート言語を選んでください / 请选择咨询语言。 / Please choose a language.",
           ].join("\n"),
           components: entryButtons(),
+          allowedMentions: { parse: [] },
         });
         await interaction.reply({
           content: "Entry message created.",
@@ -266,6 +279,35 @@ export class DiscordSupportBot {
       });
       return;
     }
+
+    if (this.startingTickets.has(interaction.user.id)) {
+      await interaction.editReply({
+        content: cooldownMessage(selectedLanguage, 3),
+      });
+      return;
+    }
+    this.startingTickets.add(interaction.user.id);
+
+    try {
+      await this.createSupportTicket(interaction, selectedLanguage);
+    } finally {
+      this.startingTickets.delete(interaction.user.id);
+    }
+  }
+
+  private async createSupportTicket(
+    interaction: ButtonInteraction,
+    selectedLanguage: SupportedLanguage,
+  ) {
+    const guild = interaction.guild;
+    const channel = interaction.channel;
+    if (!guild || !(channel instanceof TextChannel)) {
+      await interaction.editReply({
+        content: "Support entry must be in a server text channel.",
+      });
+      return;
+    }
+
     this.setCooldown(
       this.startCooldowns,
       interaction.user.id,
@@ -277,22 +319,15 @@ export class DiscordSupportBot {
       await interaction.editReply({
         content: existingTicketMessage(
           selectedLanguage,
-          `https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`,
+          `https://discord.com/channels/${guild.id}/${existing.threadId}`,
         ),
-      });
-      return;
-    }
-
-    if (!(interaction.channel instanceof TextChannel)) {
-      await interaction.editReply({
-        content: "Support entry must be in a text channel.",
       });
       return;
     }
 
     let thread: ThreadChannel;
     try {
-      thread = await interaction.channel.threads.create({
+      thread = await channel.threads.create({
         name: `support-${safeName(interaction.user.username)}-${Date.now().toString(36)}`,
         type: ChannelType.PrivateThread,
         invitable: false,
@@ -326,6 +361,7 @@ export class DiscordSupportBot {
         supportWelcomeMessage(selectedLanguage),
       ].join("\n"),
       components: ticketButtons(selectedLanguage),
+      allowedMentions: { users: [interaction.user.id] },
     });
 
     await interaction.editReply({
@@ -358,6 +394,17 @@ export class DiscordSupportBot {
       this.db.updateTicketLanguage(ticket.id, language);
     }
 
+    if (message.content.length > this.config.MAX_USER_MESSAGE_CHARS) {
+      await message.reply({
+        content: messageTooLongMessage(
+          language,
+          this.config.MAX_USER_MESSAGE_CHARS,
+        ),
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
     const cooldownSeconds = this.secondsUntilReady(
       this.messageCooldowns,
       message.author.id,
@@ -379,6 +426,15 @@ export class DiscordSupportBot {
       content: message.content,
     });
 
+    if (this.hasReachedAiAnswerLimit(ticket.userId)) {
+      await message.reply({
+        content: aiLimitMessage(language),
+        components: ticketButtons(language),
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
     await message.channel.sendTyping();
     const results = await this.knowledge.search(message.content, language, {
       limit: this.config.MAX_CONTEXT_CHUNKS,
@@ -389,6 +445,7 @@ export class DiscordSupportBot {
       await message.reply({
         content: needsStaffMessage(language),
         components: ticketButtons(language),
+        allowedMentions: { parse: [] },
       });
       return;
     }
@@ -399,12 +456,14 @@ export class DiscordSupportBot {
       userQuestion: message.content,
       contextBlocks: results.map(formatContext),
       history,
+      maxAnswerChars: this.config.MAX_AI_ANSWER_CHARS,
     });
 
     if (answer.needsStaff) {
       await message.reply({
         content: needsStaffMessage(language),
         components: ticketButtons(language),
+        allowedMentions: { parse: [] },
       });
       return;
     }
@@ -419,6 +478,7 @@ export class DiscordSupportBot {
     await message.reply({
       content: answer.answer,
       components: ticketButtons(language),
+      allowedMentions: { parse: [] },
     });
   }
 
@@ -447,7 +507,10 @@ export class DiscordSupportBot {
     const channel = await this.client.channels.fetch(threadId);
     if (channel instanceof ThreadChannel) {
       await channel.members.add(interaction.user.id);
-      await channel.send(`<@${interaction.user.id}> has joined this ticket.`);
+      await channel.send({
+        content: `<@${interaction.user.id}> has joined this ticket.`,
+        allowedMentions: { users: [interaction.user.id] },
+      });
     }
 
     this.db.updateTicketStatus(ticket.id, "human", interaction.user.id);
@@ -498,6 +561,7 @@ export class DiscordSupportBot {
         codeBlock(recent || "No messages recorded."),
       ].join("\n"),
       components: staffClaimButtons(ticket.threadId),
+      allowedMentions: { roles: [this.config.DISCORD_STAFF_ROLE_ID] },
     });
   }
 
@@ -542,7 +606,10 @@ export class DiscordSupportBot {
       try {
         const channel = await this.client.channels.fetch(ticket.threadId);
         if (channel instanceof ThreadChannel) {
-          await channel.send(autoCloseMessage(ticket.language ?? "en"));
+          await channel.send({
+            content: autoCloseMessage(ticket.language ?? "en"),
+            allowedMentions: { parse: [] },
+          });
           await this.closeTicket(ticket, channel);
         } else {
           await this.closeTicket(ticket, null);
@@ -566,6 +633,15 @@ export class DiscordSupportBot {
   private setCooldown(map: Map<string, number>, key: string, seconds: number) {
     if (seconds <= 0) return;
     map.set(key, Date.now() + seconds * 1000);
+  }
+
+  private hasReachedAiAnswerLimit(userId: string): boolean {
+    if (this.config.MAX_AI_ANSWERS_PER_USER_PER_HOUR <= 0) return false;
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    return (
+      this.db.countAssistantMessagesForUserSince(userId, since) >=
+      this.config.MAX_AI_ANSWERS_PER_USER_PER_HOUR
+    );
   }
 
   private async ensureAdmin(interaction: ChatInputCommandInteraction) {
@@ -607,8 +683,19 @@ function codeBlock(value: string): string {
 
 function formatError(error: unknown): string {
   if (error instanceof Error)
-    return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
-  return String(error);
+    return redactSecrets(`${error.name}: ${error.message}\n${error.stack ?? ""}`);
+  return redactSecrets(String(error));
+}
+
+function redactSecrets(value: string): string {
+  return value
+    .replace(/Bot\s+[A-Za-z0-9._-]+/g, "Bot [REDACTED]")
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-[REDACTED]")
+    .replace(/gho_[A-Za-z0-9_]+/g, "gho_[REDACTED]")
+    .replace(
+      /[MN][A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g,
+      "[DISCORD_TOKEN_REDACTED]",
+    );
 }
 
 async function safeErrorReply(interaction: Interaction, content: string) {

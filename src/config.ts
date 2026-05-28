@@ -17,8 +17,11 @@ const envSchema = z.object({
   MAX_CONTEXT_CHUNKS: z.coerce.number().int().min(1).max(10).default(4),
   TICKET_AUTO_CLOSE_HOURS: z.coerce.number().min(0).default(12),
   TICKET_AUTO_CLOSE_CHECK_MINUTES: z.coerce.number().min(1).default(10),
-  USER_MESSAGE_COOLDOWN_SECONDS: z.coerce.number().min(0).default(2),
-  START_TICKET_COOLDOWN_SECONDS: z.coerce.number().min(0).default(5)
+  USER_MESSAGE_COOLDOWN_SECONDS: z.coerce.number().min(0).default(0),
+  START_TICKET_COOLDOWN_SECONDS: z.coerce.number().min(0).default(5),
+  MAX_USER_MESSAGE_CHARS: z.coerce.number().int().min(100).default(1000),
+  MAX_AI_ANSWER_CHARS: z.coerce.number().int().min(200).default(1600),
+  MAX_AI_ANSWERS_PER_USER_PER_HOUR: z.coerce.number().int().min(0).default(30)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

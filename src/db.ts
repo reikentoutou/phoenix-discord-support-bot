@@ -135,6 +135,18 @@ export class AppDatabase {
     }>;
   }
 
+  countAssistantMessagesForUserSince(userId: string, sinceIso: string): number {
+    const row = this.db
+      .prepare(
+        `select count(*) as count
+         from messages m
+         join tickets t on t.id = m.ticket_id
+         where t.user_id = ? and m.role = 'assistant' and m.created_at >= ?`
+      )
+      .get(userId, sinceIso) as { count: number };
+    return row.count;
+  }
+
   getEmbedding(contentHash: string, model: string): number[] | null {
     const row = this.db
       .prepare(

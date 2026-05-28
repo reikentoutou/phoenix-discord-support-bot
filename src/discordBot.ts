@@ -136,17 +136,10 @@ export class DiscordSupportBot {
       }
     } catch (error) {
       console.error("Interaction error:", formatError(error));
-      if (
-        interaction.isRepliable() &&
-        !interaction.replied &&
-        !interaction.deferred
-      ) {
-        await interaction.reply({
-          content:
-            "Bot error. Please ask staff to check the bot terminal logs. / エラーが発生しました。Botのログを確認してください。",
-          ephemeral: true,
-        });
-      }
+      await safeErrorReply(
+        interaction,
+        "Bot error. Please ask staff to check the bot terminal logs. / エラーが発生しました。Botのログを確認してください。",
+      );
     }
   }
 
@@ -250,14 +243,15 @@ export class DiscordSupportBot {
       return;
     }
 
+    await interaction.deferReply({ ephemeral: true });
+
     if (
       !interaction.guild ||
       !interaction.channel ||
       interaction.channelId !== this.config.DISCORD_ENTRY_CHANNEL_ID
     ) {
-      await interaction.reply({
+      await interaction.editReply({
         content: "Please start support from the configured entry channel.",
-        ephemeral: true,
       });
       return;
     }
@@ -267,9 +261,8 @@ export class DiscordSupportBot {
       interaction.user.id,
     );
     if (startCooldownSeconds > 0) {
-      await interaction.reply({
+      await interaction.editReply({
         content: cooldownMessage(selectedLanguage, startCooldownSeconds),
-        ephemeral: true,
       });
       return;
     }
@@ -281,20 +274,18 @@ export class DiscordSupportBot {
 
     const existing = this.db.getOpenTicketForUser(interaction.user.id);
     if (existing) {
-      await interaction.reply({
+      await interaction.editReply({
         content: existingTicketMessage(
           selectedLanguage,
           `https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`,
         ),
-        ephemeral: true,
       });
       return;
     }
 
     if (!(interaction.channel instanceof TextChannel)) {
-      await interaction.reply({
+      await interaction.editReply({
         content: "Support entry must be in a text channel.",
-        ephemeral: true,
       });
       return;
     }
@@ -310,10 +301,9 @@ export class DiscordSupportBot {
       await thread.members.add(interaction.user.id);
     } catch (error) {
       console.error("Failed to create support thread:", formatError(error));
-      await interaction.reply({
+      await interaction.editReply({
         content:
           "无法创建 private thread。请确认 Bot 有「创建私密子区」「管理子区」「在子区内发送消息」权限，并且频道没有达到 thread 限制。",
-        ephemeral: true,
       });
       return;
     }
@@ -338,9 +328,8 @@ export class DiscordSupportBot {
       components: ticketButtons(selectedLanguage),
     });
 
-    await interaction.reply({
+    await interaction.editReply({
       content: `Support ticket created: ${thread.url}`,
-      ephemeral: true,
     });
   }
 
@@ -620,6 +609,19 @@ function formatError(error: unknown): string {
   if (error instanceof Error)
     return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
   return String(error);
+}
+
+async function safeErrorReply(interaction: Interaction, content: string) {
+  if (!interaction.isRepliable()) return;
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp({ content, ephemeral: true });
+      return;
+    }
+    await interaction.reply({ content, ephemeral: true });
+  } catch (error) {
+    console.error("Failed to send interaction error response:", formatError(error));
+  }
 }
 
 function setupEntryMissingPermissions(

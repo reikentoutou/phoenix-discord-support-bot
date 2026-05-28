@@ -82,18 +82,39 @@ export class AppDatabase {
     role: "user" | "assistant" | "staff" | "system";
     content: string;
   }) {
-    this.db
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `insert into messages (ticket_id, author_id, role, content, created_at)
+           values (?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.ticketId,
+          input.authorId,
+          input.role,
+          input.content,
+          now
+        );
+
+      this.db
+        .prepare("update tickets set updated_at = ? where id = ?")
+        .run(now, input.ticketId);
+    });
+
+    transaction();
+  }
+
+  listInactiveOpenTickets(cutoffIso: string): Ticket[] {
+    return this.db
       .prepare(
-        `insert into messages (ticket_id, author_id, role, content, created_at)
-         values (?, ?, ?, ?, ?)`
+        `select * from tickets
+         where status != 'closed' and updated_at < ?
+         order by updated_at asc`
       )
-      .run(
-        input.ticketId,
-        input.authorId,
-        input.role,
-        input.content,
-        new Date().toISOString()
-      );
+      .all(cutoffIso)
+      .map(mapTicket)
+      .filter((ticket): ticket is Ticket => ticket !== null);
   }
 
   listRecentMessages(ticketId: number, limit = 12) {

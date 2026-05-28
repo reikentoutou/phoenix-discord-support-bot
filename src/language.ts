@@ -91,3 +91,25 @@ export function existingTicketMessage(language: SupportedLanguage, url: string):
       return `You already have an open ticket: ${url}`;
   }
 }
+
+export function cooldownMessage(language: SupportedLanguage, seconds: number): string {
+  switch (language) {
+    case "zh":
+      return `请稍等 ${seconds} 秒后再发送。`;
+    case "ja":
+      return `${seconds}秒待ってから再度送信してください。`;
+    case "en":
+      return `Please wait ${seconds} seconds before sending another message.`;
+  }
+}
+
+export function autoCloseMessage(language: SupportedLanguage): string {
+  switch (language) {
+    case "zh":
+      return "由于长时间没有新消息，此咨询已自动关闭。如需继续咨询，请重新点击入口按钮。";
+    case "ja":
+      return "長時間新しいメッセージがなかったため、この相談は自動的にクローズされました。続けて相談する場合は、入口ボタンから再度開始してください。";
+    case "en":
+      return "This ticket was automatically closed because there were no new messages for a while. Please start a new ticket if you need more help.";
+  }
+}

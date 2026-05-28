@@ -14,7 +14,11 @@ const commands = [
     .setDescription("Close the current support ticket."),
   new SlashCommandBuilder()
     .setName("ticket-status")
-    .setDescription("Show the current support ticket status.")
+    .setDescription("Show the current support ticket status."),
+  new SlashCommandBuilder()
+    .setName("reload-kb")
+    .setDescription("Reload the Markdown knowledge base without restarting the bot.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 ].map((command) => command.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(config.DISCORD_TOKEN);

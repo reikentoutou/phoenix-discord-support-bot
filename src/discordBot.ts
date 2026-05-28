@@ -11,47 +11,58 @@ import {
   Partials,
   PermissionFlagsBits,
   TextChannel,
-  ThreadChannel
+  ThreadChannel,
 } from "discord.js";
 import type { AppConfig } from "./config.js";
 import type { OpenAIService } from "./ai.js";
 import { AppDatabase } from "./db.js";
-import { ButtonIds, entryButtons, staffClaimButtons, ticketButtons } from "./buttons.js";
 import {
+  ButtonIds,
+  entryButtons,
+  staffClaimButtons,
+  ticketButtons,
+} from "./buttons.js";
+import {
+  autoCloseMessage,
+  cooldownMessage,
   detectLanguage,
   existingTicketMessage,
   handoffConfirmedMessage,
   languageName,
   needsStaffMessage,
   supportWelcomeMessage,
-  ticketClosedMessage
+  ticketClosedMessage,
 } from "./language.js";
 import { formatContext, KnowledgeBase } from "./knowledge.js";
 import type { SupportedLanguage, Ticket } from "./types.js";
 
 export class DiscordSupportBot {
   readonly client: Client;
+  private autoCloseTimer: NodeJS.Timeout | null = null;
+  private readonly messageCooldowns = new Map<string, number>();
+  private readonly startCooldowns = new Map<string, number>();
 
   constructor(
     private readonly config: AppConfig,
     private readonly db: AppDatabase,
     private readonly knowledge: KnowledgeBase,
-    private readonly ai: OpenAIService
+    private readonly ai: OpenAIService,
   ) {
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
       ],
-      partials: [Partials.Channel, Partials.Message]
+      partials: [Partials.Channel, Partials.Message],
     });
   }
 
   async start() {
     this.client.once(Events.ClientReady, (client) => {
       console.log(`Logged in as ${client.user.tag}`);
+      this.startAutoCloseScheduler();
     });
 
     this.client.on(Events.InteractionCreate, (interaction) => {
@@ -84,14 +95,18 @@ export class DiscordSupportBot {
         if (!ticket) {
           await interaction.reply({
             content: "No active ticket found in this thread.",
-            ephemeral: true
+            ephemeral: true,
           });
           return;
         }
-        await this.moveToHuman(ticket, interaction.user.id, "Customer requested staff.");
+        await this.moveToHuman(
+          ticket,
+          interaction.user.id,
+          "Customer requested staff.",
+        );
         await interaction.reply({
           content: handoffConfirmedMessage(ticket.language ?? "en"),
-          ephemeral: false
+          ephemeral: false,
         });
         return;
       }
@@ -101,15 +116,18 @@ export class DiscordSupportBot {
         if (!ticket) {
           await interaction.reply({
             content: "No active ticket found in this thread.",
-            ephemeral: true
+            ephemeral: true,
           });
           return;
         }
         await interaction.reply({
           content: ticketClosedMessage(ticket.language ?? "en"),
-          ephemeral: false
+          ephemeral: false,
         });
-        await this.closeTicket(ticket, interaction.channel as ThreadChannel | null);
+        await this.closeTicket(
+          ticket,
+          interaction.channel as ThreadChannel | null,
+        );
         return;
       }
 
@@ -118,11 +136,15 @@ export class DiscordSupportBot {
       }
     } catch (error) {
       console.error("Interaction error:", formatError(error));
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+      if (
+        interaction.isRepliable() &&
+        !interaction.replied &&
+        !interaction.deferred
+      ) {
         await interaction.reply({
           content:
             "Bot error. Please ask staff to check the bot terminal logs. / エラーが発生しました。Botのログを確認してください。",
-          ephemeral: true
+          ephemeral: true,
         });
       }
     }
@@ -132,22 +154,25 @@ export class DiscordSupportBot {
     switch (interaction.commandName) {
       case "setup-entry":
         await this.ensureAdmin(interaction);
-        if (!interaction.channel?.isTextBased() || !("send" in interaction.channel)) {
+        if (
+          !interaction.channel?.isTextBased() ||
+          !("send" in interaction.channel)
+        ) {
           await interaction.reply({
             content: "Run this command in a text channel.",
-            ephemeral: true
+            ephemeral: true,
           });
           return;
         }
         if ("permissionsFor" in interaction.channel) {
           const missingPermissions = setupEntryMissingPermissions(
             interaction.channel,
-            this.client.user?.id
+            this.client.user?.id,
           );
           if (missingPermissions.length > 0) {
             await interaction.reply({
               content: `Bot is missing permissions in this channel: ${missingPermissions.join(", ")}`,
-              ephemeral: true
+              ephemeral: true,
             });
             return;
           }
@@ -155,13 +180,13 @@ export class DiscordSupportBot {
         await interaction.channel.send({
           content: [
             "**PHOENIX Support**",
-            "请选择咨询语言。 / Please choose a language."
+            "サポート言語を選んでください / 请选择咨询语言。 / Please choose a language.",
           ].join("\n"),
-          components: entryButtons()
+          components: entryButtons(),
         });
         await interaction.reply({
           content: "Entry message created.",
-          ephemeral: true
+          ephemeral: true,
         });
         break;
 
@@ -169,13 +194,17 @@ export class DiscordSupportBot {
         const ticket = await this.requireThreadTicket(interaction.channelId);
         if (!ticket) {
           await interaction.reply({
-            content: "This command must be used inside an active ticket thread.",
-            ephemeral: true
+            content:
+              "This command must be used inside an active ticket thread.",
+            ephemeral: true,
           });
           return;
         }
         await interaction.reply(ticketClosedMessage(ticket.language ?? "en"));
-        await this.closeTicket(ticket, interaction.channel as ThreadChannel | null);
+        await this.closeTicket(
+          ticket,
+          interaction.channel as ThreadChannel | null,
+        );
         break;
       }
 
@@ -184,7 +213,7 @@ export class DiscordSupportBot {
         if (!ticket) {
           await interaction.reply({
             content: "No ticket found in this thread.",
-            ephemeral: true
+            ephemeral: true,
           });
           return;
         }
@@ -193,12 +222,21 @@ export class DiscordSupportBot {
             `Ticket #${ticket.id}`,
             `Status: ${ticket.status}`,
             `Language: ${ticket.language ? languageName(ticket.language) : "unknown"}`,
-            `Claimed by: ${ticket.claimedBy ? `<@${ticket.claimedBy}>` : "none"}`
+            `Claimed by: ${ticket.claimedBy ? `<@${ticket.claimedBy}>` : "none"}`,
           ].join("\n"),
-          ephemeral: true
+          ephemeral: true,
         });
         break;
       }
+
+      case "reload-kb":
+        await this.ensureAdmin(interaction);
+        this.knowledge.load();
+        await interaction.reply({
+          content: "Knowledge base reloaded.",
+          ephemeral: true,
+        });
+        break;
     }
   }
 
@@ -207,27 +245,48 @@ export class DiscordSupportBot {
     if (!selectedLanguage) {
       await interaction.reply({
         content: "Invalid language selection.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
 
-    if (!interaction.guild || !interaction.channel || interaction.channelId !== this.config.DISCORD_ENTRY_CHANNEL_ID) {
+    if (
+      !interaction.guild ||
+      !interaction.channel ||
+      interaction.channelId !== this.config.DISCORD_ENTRY_CHANNEL_ID
+    ) {
       await interaction.reply({
         content: "Please start support from the configured entry channel.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
+
+    const startCooldownSeconds = this.secondsUntilReady(
+      this.startCooldowns,
+      interaction.user.id,
+    );
+    if (startCooldownSeconds > 0) {
+      await interaction.reply({
+        content: cooldownMessage(selectedLanguage, startCooldownSeconds),
+        ephemeral: true,
+      });
+      return;
+    }
+    this.setCooldown(
+      this.startCooldowns,
+      interaction.user.id,
+      this.config.START_TICKET_COOLDOWN_SECONDS,
+    );
 
     const existing = this.db.getOpenTicketForUser(interaction.user.id);
     if (existing) {
       await interaction.reply({
         content: existingTicketMessage(
           selectedLanguage,
-          `https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`
+          `https://discord.com/channels/${interaction.guild.id}/${existing.threadId}`,
         ),
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
@@ -235,7 +294,7 @@ export class DiscordSupportBot {
     if (!(interaction.channel instanceof TextChannel)) {
       await interaction.reply({
         content: "Support entry must be in a text channel.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
@@ -246,7 +305,7 @@ export class DiscordSupportBot {
         name: `support-${safeName(interaction.user.username)}-${Date.now().toString(36)}`,
         type: ChannelType.PrivateThread,
         invitable: false,
-        reason: `Support ticket for ${interaction.user.tag}`
+        reason: `Support ticket for ${interaction.user.tag}`,
       });
       await thread.members.add(interaction.user.id);
     } catch (error) {
@@ -254,7 +313,7 @@ export class DiscordSupportBot {
       await interaction.reply({
         content:
           "无法创建 private thread。请确认 Bot 有「创建私密子区」「管理子区」「在子区内发送消息」权限，并且频道没有达到 thread 限制。",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
@@ -262,31 +321,32 @@ export class DiscordSupportBot {
     const ticket = this.db.createTicket({
       threadId: thread.id,
       userId: interaction.user.id,
-      language: selectedLanguage
+      language: selectedLanguage,
     });
     this.db.addMessage({
       ticketId: ticket.id,
       authorId: "system",
       role: "system",
-      content: "Ticket created."
+      content: "Ticket created.",
     });
 
     await thread.send({
       content: [
         `<@${interaction.user.id}>`,
-        supportWelcomeMessage(selectedLanguage)
+        supportWelcomeMessage(selectedLanguage),
       ].join("\n"),
-      components: ticketButtons(selectedLanguage)
+      components: ticketButtons(selectedLanguage),
     });
 
     await interaction.reply({
       content: `Support ticket created: ${thread.url}`,
-      ephemeral: true
+      ephemeral: true,
     });
   }
 
   private async handleMessage(message: Message) {
-    if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
+    if (message.author.bot || !message.inGuild() || !message.channel.isThread())
+      return;
 
     const ticket = this.db.getTicketByThread(message.channel.id);
     if (!ticket || ticket.status === "closed") return;
@@ -297,7 +357,7 @@ export class DiscordSupportBot {
         ticketId: ticket.id,
         authorId: message.author.id,
         role: isTicketOwner ? "user" : "staff",
-        content: message.content
+        content: message.content,
       });
       return;
     }
@@ -309,23 +369,37 @@ export class DiscordSupportBot {
       this.db.updateTicketLanguage(ticket.id, language);
     }
 
+    const cooldownSeconds = this.secondsUntilReady(
+      this.messageCooldowns,
+      message.author.id,
+    );
+    if (cooldownSeconds > 0) {
+      await message.reply(cooldownMessage(language, cooldownSeconds));
+      return;
+    }
+    this.setCooldown(
+      this.messageCooldowns,
+      message.author.id,
+      this.config.USER_MESSAGE_COOLDOWN_SECONDS,
+    );
+
     this.db.addMessage({
       ticketId: ticket.id,
       authorId: message.author.id,
       role: "user",
-      content: message.content
+      content: message.content,
     });
 
     await message.channel.sendTyping();
     const results = await this.knowledge.search(message.content, language, {
       limit: this.config.MAX_CONTEXT_CHUNKS,
-      minScore: this.config.MIN_RETRIEVAL_SCORE
+      minScore: this.config.MIN_RETRIEVAL_SCORE,
     });
 
     if (results.length === 0) {
       await message.reply({
         content: needsStaffMessage(language),
-        components: ticketButtons(language)
+        components: ticketButtons(language),
       });
       return;
     }
@@ -335,13 +409,13 @@ export class DiscordSupportBot {
       language,
       userQuestion: message.content,
       contextBlocks: results.map(formatContext),
-      history
+      history,
     });
 
     if (answer.needsStaff) {
       await message.reply({
         content: needsStaffMessage(language),
-        components: ticketButtons(language)
+        components: ticketButtons(language),
       });
       return;
     }
@@ -350,12 +424,12 @@ export class DiscordSupportBot {
       ticketId: ticket.id,
       authorId: this.client.user?.id ?? "bot",
       role: "assistant",
-      content: answer.answer
+      content: answer.answer,
     });
 
     await message.reply({
       content: answer.answer,
-      components: ticketButtons(language)
+      components: ticketButtons(language),
     });
   }
 
@@ -366,7 +440,7 @@ export class DiscordSupportBot {
     if (!hasStaffRole(member, this.config.DISCORD_STAFF_ROLE_ID)) {
       await interaction.reply({
         content: "Only Staff role members can claim tickets.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
@@ -376,7 +450,7 @@ export class DiscordSupportBot {
     if (!ticket || ticket.status === "closed") {
       await interaction.reply({
         content: "Ticket is no longer active.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
@@ -390,20 +464,21 @@ export class DiscordSupportBot {
     this.db.updateTicketStatus(ticket.id, "human", interaction.user.id);
     await interaction.reply({
       content: `Claimed ticket #${ticket.id}.`,
-      ephemeral: true
+      ephemeral: true,
     });
   }
 
   private async moveToHuman(ticket: Ticket, actorId: string, reason: string) {
     const current = this.db.getTicketById(ticket.id);
-    if (!current || current.status === "human" || current.status === "closed") return;
+    if (!current || current.status === "human" || current.status === "closed")
+      return;
 
     this.db.updateTicketStatus(ticket.id, "human", null);
     this.db.addMessage({
       ticketId: ticket.id,
       authorId: actorId,
       role: "system",
-      content: `Moved to human: ${reason}`
+      content: `Moved to human: ${reason}`,
     });
 
     await this.notifyStaff(ticket, reason);
@@ -411,7 +486,7 @@ export class DiscordSupportBot {
 
   private async notifyStaff(ticket: Ticket, reason: string) {
     const staffChannel = await this.client.channels.fetch(
-      this.config.DISCORD_STAFF_CHANNEL_ID
+      this.config.DISCORD_STAFF_CHANNEL_ID,
     );
     if (!staffChannel?.isTextBased() || !("send" in staffChannel)) {
       console.warn("Configured staff channel is not text based.");
@@ -431,9 +506,9 @@ export class DiscordSupportBot {
         `Thread: https://discord.com/channels/${this.config.DISCORD_GUILD_ID}/${ticket.threadId}`,
         `Reason: ${reason}`,
         "Recent messages:",
-        codeBlock(recent || "No messages recorded.")
+        codeBlock(recent || "No messages recorded."),
       ].join("\n"),
-      components: staffClaimButtons(ticket.threadId)
+      components: staffClaimButtons(ticket.threadId),
     });
   }
 
@@ -443,7 +518,7 @@ export class DiscordSupportBot {
       ticketId: ticket.id,
       authorId: "system",
       role: "system",
-      content: "Ticket closed."
+      content: "Ticket closed.",
     });
 
     if (channel) {
@@ -456,11 +531,59 @@ export class DiscordSupportBot {
     return this.db.getTicketByThread(channelId);
   }
 
+  private startAutoCloseScheduler() {
+    if (this.config.TICKET_AUTO_CLOSE_HOURS <= 0 || this.autoCloseTimer) return;
+
+    const intervalMs =
+      this.config.TICKET_AUTO_CLOSE_CHECK_MINUTES * 60 * 1000;
+    this.autoCloseTimer = setInterval(() => {
+      void this.closeInactiveTickets();
+    }, intervalMs);
+    this.autoCloseTimer.unref();
+    void this.closeInactiveTickets();
+  }
+
+  private async closeInactiveTickets() {
+    const cutoff = new Date(
+      Date.now() - this.config.TICKET_AUTO_CLOSE_HOURS * 60 * 60 * 1000,
+    ).toISOString();
+    const tickets = this.db.listInactiveOpenTickets(cutoff);
+
+    for (const ticket of tickets) {
+      try {
+        const channel = await this.client.channels.fetch(ticket.threadId);
+        if (channel instanceof ThreadChannel) {
+          await channel.send(autoCloseMessage(ticket.language ?? "en"));
+          await this.closeTicket(ticket, channel);
+        } else {
+          await this.closeTicket(ticket, null);
+        }
+      } catch (error) {
+        console.error(
+          `Failed to auto-close ticket #${ticket.id}:`,
+          formatError(error),
+        );
+        await this.closeTicket(ticket, null);
+      }
+    }
+  }
+
+  private secondsUntilReady(map: Map<string, number>, key: string): number {
+    const readyAt = map.get(key) ?? 0;
+    const remainingMs = readyAt - Date.now();
+    return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+  }
+
+  private setCooldown(map: Map<string, number>, key: string, seconds: number) {
+    if (seconds <= 0) return;
+    map.set(key, Date.now() + seconds * 1000);
+  }
+
   private async ensureAdmin(interaction: ChatInputCommandInteraction) {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.reply({
         content: "This command requires Manage Server permission.",
-        ephemeral: true
+        ephemeral: true,
       });
       throw new Error("Missing ManageGuild permission.");
     }
@@ -494,13 +617,16 @@ function codeBlock(value: string): string {
 }
 
 function formatError(error: unknown): string {
-  if (error instanceof Error) return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
+  if (error instanceof Error)
+    return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
   return String(error);
 }
 
 function setupEntryMissingPermissions(
-  channel: { permissionsFor(userId: string): { has(permission: bigint): boolean } | null },
-  botUserId: string | undefined
+  channel: {
+    permissionsFor(userId: string): { has(permission: bigint): boolean } | null;
+  },
+  botUserId: string | undefined,
 ): string[] {
   if (!botUserId) return ["Bot user not ready"];
   const permissions = channel.permissionsFor(botUserId);
@@ -509,7 +635,7 @@ function setupEntryMissingPermissions(
   const required: Array<[bigint, string]> = [
     [PermissionFlagsBits.ViewChannel, "View Channel"],
     [PermissionFlagsBits.SendMessages, "Send Messages"],
-    [PermissionFlagsBits.ReadMessageHistory, "Read Message History"]
+    [PermissionFlagsBits.ReadMessageHistory, "Read Message History"],
   ];
 
   return required
